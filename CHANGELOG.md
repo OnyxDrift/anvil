@@ -33,6 +33,23 @@ Baseline note schema: `type`, `domain`, `subdomain`, `project`, `source`,
 
 ## Tooling (`TOOLING_VERSION`, the anvil scripts and Skills themselves)
 
+### 0.0.0_6
+
+`install.sh` now works piped straight into bash with no local checkout —
+`curl -fsSL https://raw.githubusercontent.com/OnyxDrift/anvil/main/install.sh | bash`.
+It detects when it isn't running from an on-disk clone, fetches a
+throwaway copy of the repo (`git clone`, or `curl`+`tar` if `git` isn't
+on PATH) into a temp dir, re-runs itself from there, then deletes it.
+Must be piped to `bash`, not generic `sh` — the script uses bash-only
+array syntax that breaks under `dash`/POSIX-mode `sh`.
+
+New `--remote-upgrades` flag (implied automatically for a piped install)
+records the GitHub repo in `tooling-source` instead of a local clone
+path, so the clone used for the initial install can be deleted right
+after. `bin/upgrade` now understands that `git:<url>#<ref>` form: it
+fetches a fresh temp copy from GitHub on every upgrade instead of
+requiring the original clone to still exist on disk.
+
 ### 0.0.0_5
 
 Fixed a real over-application bug in `CLAUDE_BLOCK.md`'s branding rule,

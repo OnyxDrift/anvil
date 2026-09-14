@@ -41,6 +41,23 @@ on demand with `recall`, and add to it on demand with `note`.
 ./install.sh
 ```
 
+Or, with no local checkout at all:
+
+```
+curl -fsSL https://raw.githubusercontent.com/OnyxDrift/anvil/main/install.sh | bash
+```
+
+Must be piped to `bash`, not generic `sh` — this script uses bash-only
+array syntax that `dash`/POSIX-mode `sh` (the usual `/bin/sh` on Linux and
+macOS) can't run. This form fetches a throwaway copy of the repo into a
+temp dir first (`git clone` if `git` is on PATH, otherwise `curl`+`tar`),
+runs the installer from there, then deletes it — nothing is left behind
+except what gets installed into the vault and, optionally, Claude Code's
+skills directory. Pass flags after `--`, e.g.
+`curl -fsSL <url>/install.sh | bash -s -- --multi-machine`. Point
+`ANVIL_REPO_URL` / `ANVIL_REPO_REF` (env vars) at a fork or different
+branch if you don't want `OnyxDrift/anvil`/`main`.
+
 Run with no flags, it asks up to six questions, in order:
 
 1. **Single machine, or shared across more than one?** Single machine installs
@@ -83,8 +100,8 @@ All six questions can be skipped with flags, for scripted or repeat installs:
 
 or by exporting `ANVIL_MODE` (`single`/`multi`), `ANVIL_VAULT_ACTION`
 (`new`/`existing`), `ANVIL_HOME`, `ANVIL_DOMAINS`, and
-`ANVIL_CLAUDE_SKILLS_DIR` before running. Piped installs (e.g. via
-`curl | sh`) have no terminal to prompt on, so they default to
+`ANVIL_CLAUDE_SKILLS_DIR` before running. Piped installs (`curl | bash`,
+see above) have no terminal to prompt on, so they default to
 single-machine, new-vault, the vault's standard path, the suggested domain
 list, and installing Skills only if `~/.claude/skills` already exists,
 unless those flags or environment variables say otherwise — pass
@@ -426,15 +443,24 @@ kept apart everywhere now:
   `TOOLING_VERSION` (also package-managed). Deployment here is always a
   full atomic overwrite, so unlike schema there's no separate "applied"
   marker to track. Fixed by **`anvil upgrade`**, which pulls fresh
-  `bin/*`/Skills/`NOTE_TEMPLATE.md` from the local source repo that
-  originally installed this vault — its path is recorded at install time
-  in `${XDG_STATE_HOME:-$HOME/.local/state}/anvil/tooling-source`,
+  `bin/*`/Skills/`NOTE_TEMPLATE.md` from wherever `install.sh` recorded as
+  this vault's tooling source, in
+  `${XDG_STATE_HOME:-$HOME/.local/state}/anvil/tooling-source`,
   **deliberately outside the vault folder** so it never syncs via
-  Syncthing (each machine's own clone lives at its own path) — without
-  needing to re-run the full interactive installer. Conservative by
-  default: it only refreshes Claude Code Skills if they were already
+  Syncthing (each machine's own source is specific to that machine) —
+  without needing to re-run the full interactive installer. Conservative
+  by default: it only refreshes Claude Code Skills if they were already
   installed for this exact vault, and never touches shell rc files unless
   `--add-to-path` is passed.
+
+  That recorded source is one of two things: a local clone path (the
+  default for a normal `./install.sh` run out of a cloned repo), or a
+  `git:<url>#<ref>` pointer — recorded automatically for a
+  `curl | bash` install (there's no durable clone to point at), or for any
+  install run with `--remote-upgrades`. With the `git:` form, `anvil
+  upgrade` fetches a fresh throwaway copy straight from GitHub every time
+  instead of expecting a local clone to still exist — so the clone used
+  for the initial install (if there was one) can be deleted right after.
 
 `bin/status` shows both versions, each with its own mismatch warning — a
 vault can be behind on schema, tooling, both, or neither, and it says
