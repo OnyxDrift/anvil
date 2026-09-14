@@ -1,5 +1,7 @@
 # Anvil
 
+![Anvil](docs/images/anvil-banner.jpg)
+
 A shared markdown vault. Claude Code and Grok Build write to it and read from it,
 as equals. It stops agents from re-solving problems already solved.
 
@@ -11,29 +13,40 @@ on demand with `recall`, and add to it on demand with `note`.
 
 ## Prerequisites
 
+**Required:**
+
 - **macOS or Linux.** These scripts avoid bash-4-only syntax (no
   `declare -A`, no `${var^^}`) specifically so they run unmodified on
   macOS's default `/bin/bash` (3.2) — Linux's typically newer default bash
   works fine too, without needing anything installed for that reason.
-- **Homebrew** — strongly recommended, not strictly required. `install.sh`
-  uses it to auto-install the two things below. Without it, the installer
-  still runs, but prints a manual-install link instead of installing them
-  for you.
 - **`ripgrep` (`rg`)** — required by `bin/recall`. `install.sh` installs it
   automatically via Homebrew if it's missing; nothing to do ahead of time.
-- **Syncthing** — only needed for a multi-machine vault. `install.sh`
-  installs it automatically via Homebrew if you choose multi-machine mode
-  and it's missing.
-- **Obsidian** — entirely optional. Only used for browsing the vault
-  visually (see "Viewing the vault in Obsidian" below); agents never need
-  it, and nothing in `bin/recall` or `bin/note` depends on it.
-- **`pgrep`** — used only in the headless-Syncthing tunnel-teardown
-  instructions. It ships with macOS by default; nothing to install.
-- **Claude Code** — only needed if you want the `/recall`, `/note`,
-  `/reflect`, `/anvil`, `/hydrate`, and `/fill-vault` Skills (see below).
-  `install.sh` looks for its default Skills directory automatically; if
-  Claude Code isn't installed at all, just skip that question. Nothing
-  else about anvil depends on it.
+- **Claude Code and/or Grok Build.** Anvil's whole point is an LLM agent
+  reading and writing the vault on its own — a plain human typing
+  `bin/note`/`bin/recall` by hand works too, but that's not what this tool
+  is built for. `install.sh` wires up the `/recall`, `/note`, `/reflect`,
+  `/anvil`, `/hydrate`, and `/fill-vault` Skills automatically if Claude
+  Code's default location (`~/.claude`) is found; Grok Build support is the
+  same `CLAUDE_BLOCK.md`/`AGENTS.md` pointer, wired by hand (see "Wiring a
+  project to use anvil" below) since Grok Build has no Skills directory to
+  auto-install into.
+
+**Optional:**
+
+- **Homebrew** — strongly recommended, not strictly required. `install.sh`
+  uses it to auto-install `ripgrep` and, in multi-machine mode, Syncthing.
+  Without it, the installer still runs, but prints a manual-install link
+  instead of installing them for you.
+- **Syncthing (optional)** — only needed for a multi-machine vault.
+  `install.sh` installs it automatically via Homebrew if you choose
+  multi-machine mode and it's missing. A single-machine vault needs it not
+  at all.
+- **Obsidian (optional)** — only for browsing the vault visually (see
+  "Viewing the vault in Obsidian" below). Agents never need it, and
+  nothing in `bin/recall` or `bin/note` depends on it.
+- **`pgrep` (optional)** — used only in the headless-Syncthing
+  tunnel-teardown instructions. Ships with macOS by default; nothing to
+  install.
 
 ## Install
 
@@ -148,131 +161,6 @@ Syncthing's device pairing needs one click on each machine — that part cannot
 be scripted. Choosing multi-machine mode gets you to the pairing screen and
 prints the exact steps for both this machine and each client; it does not
 click through the pairing for you.
-
-## Uninstall
-
-```
-./uninstall.sh
-```
-
-Removes only the package-managed files (`bin/recall`, `bin/note`,
-`bin/status`, `bin/anvil`, `bin/NOTE_TEMPLATE.md`, `CLAUDE_BLOCK.md`), the
-`/recall`, `/note`, `/reflect`, and `/anvil` Skills (from
-`~/.claude/skills` by default — override with `--claude-skills-dir`, same
-as `install.sh`; only those four subdirectories are touched, nothing else
-there), and the anvil `PATH` block from `~/.bashrc`/`~/.zshrc` if
-`install.sh` added one (only that clearly-marked block, nothing else in
-those files). Your notes, `index.md`, `domains.txt`, and `moc/*.md` stay
-on disk.
-
-To delete all vault content — notes, `index.md`, `domains.txt`, `moc/`,
-everything:
-
-```
-./uninstall.sh --purge
-```
-
-This asks for confirmation (type the vault path back), then — if you didn't
-already say via a flag — asks whether to also delete the `anvil/` folder
-itself, or just empty it and leave the folder in place. Keeping the folder
-(along with its `.stfolder` marker, if Syncthing created one) means an open
-Obsidian window or a Syncthing folder pointed at that path doesn't lose the
-directory out from under it; that's why it's the safer of the two, and the
-default in a non-interactive run. This is all irreversible either way.
-
-Skip that question with an explicit flag, for scripted runs:
-
-```
-./uninstall.sh --purge --keep-folder     # empty contents, keep the folder
-./uninstall.sh --purge --delete-folder   # remove the folder entirely too
-```
-
-Only use `--delete-folder` if nothing else (Obsidian, Syncthing) still
-references that exact path.
-
-## Vault structure
-
-```
-anvil/
-  index.md         # one line per note, the map of the vault
-  domains.txt      # the allowed domain list — edit this file to add one
-  CLAUDE_BLOCK.md   # generated pointer block, path pre-filled — paste into a project's CLAUDE.md
-  moc/              # maps of content — one generated file per domain
-    Software.md      # (this set matches whatever's in domains.txt —
-    Finance.md        #  the suggested default, shown here as an example,
-    Trading.md         #  not a fixed list)
-    Business.md
-    Health.md
-  semantic/         # facts that stay true (e.g. "auth is Clerk, not NextAuth")
-  procedural/       # how we build, test, deploy
-  strategic/        # decisions, and why — do not reopen without reading first
-  episodic/         # dated notes: what was tried, what happened
-  raw/              # unprocessed dumps — recall ignores this
-  _inbox/           # draft notes awaiting review — recall ignores this
-  _review/          # notes flagged for the weekly janitor pass
-  _archive/         # retired notes — recall ignores this
-  bin/
-    recall          # search canonical notes
-    note            # write a new note
-    status          # domain/subdomain tree, note counts, size, token estimate
-    NOTE_TEMPLATE.md
-```
-
-## Rules
-
-- One vault. Do not also use Claude's or Grok's built-in memory features as a
-  second knowledge store.
-- Never preload the vault into `CLAUDE.md`. Point at it; do not paste it.
-- One claim per note. Frontmatter is required on every note.
-- `recall` reads only `status: canonical` notes, and only from `semantic/`,
-  `procedural/`, and `strategic/`.
-- If you sync this vault across machines (Syncthing) and get a conflict on
-  those three folders, the copy on your primary coder-agent machine wins.
-
-## Categorizing notes: domain, subdomain, project, tags, origin
-
-Four fields, each doing a different job — the two most often confused for
-each other are `subdomain` and `project`, so read those two together:
-
-- **`domain`** — broad, few, stable. Must match a line in `domains.txt`.
-  `bin/note` enforces this: an unrecognized domain is a hard error, printing
-  the current list. You choose the starting list at install time (defaults
-  to `software`, `finance`, `trading`, `business`, `health`, but that's only
-  a suggestion). This list is meant to stay short — if a note genuinely
-  doesn't fit any of these, that's a decision for a human to make
-  deliberately (add a line to `domains.txt`), not something an agent should
-  invent on its own.
-- **`subdomain`** — free text, no enforcement. **Normally a tool,
-  technology, or language** — `syncthing`, `python`, `ssh`, `ripgrep`. Not
-  one of your own projects; that's what `project` is for. **For a domain
-  where notes usually aren't about software tooling at all** (e.g.
-  `trading`, `finance`), `subdomain` may instead be a topical sub-category
-  of that domain — `backtesting`, `portfolio-theory`,
-  `performance-metrics` — still never a project, and still worth checking
-  `bin/status`'s existing tree first to reuse a category instead of
-  inventing a near-synonym. This pattern was validated in real use: a
-  `/hydrate`-adjacent session mining general trading/quant mechanics out
-  of a codebase used exactly this shape across ten notes with no
-  `project` conflict and no invented near-duplicates.
-- **`project`** — free text, no enforcement. **One of your own named
-  projects** — `anvil`, `citeforge`, `swing-stack`. Not a tool or
-  technology; that's what `subdomain` is for. Putting the same value in
-  both fields (e.g. `subdomain: anvil` and `project: anvil` on the same
-  note) is a sign the note is miscategorized, not that it's extra-tagged.
-- **`tags`** — free-form keywords, a YAML list (`[python, cli, docker]`).
-  Not enforced, and can overlap with `subdomain` or `project` — use tags
-  for anything that would help a future search find the note, even if it's
-  not the note's main subject. Obsidian reads this field natively and
-  builds a clickable Tags pane from it across the whole vault, on top of
-  the MOC/graph structure described below.
-- **`origin`** — free text, no enforcement. **What backs the claim** — not
-  who wrote the note (that's `source`). For code, a git remote URL if one
-  exists, else the repo's local root path, else the plain working
-  directory if it isn't a git repo at all. For anything else, a book
-  title, a webpage URL, a PDF filename — whatever the claim is actually
-  citing. `bin/note` auto-detects the code case from the caller's current
-  directory; pass `--origin` explicitly to override it, or for a non-code
-  domain where nothing can be auto-detected.
 
 ## Usage
 
@@ -421,96 +309,7 @@ export PATH="$HOME/.anvil/bin:$PATH"
 ```
 `uninstall.sh` finds and removes exactly this block (nothing else in
 those files is touched) as part of its normal cleanup — see "Uninstall"
-above.
-
-## Versioning and upgrades
-
-Anvil tracks **two independent version axes** — conflating them was a
-real early mistake this README used to reflect, so they're deliberately
-kept apart everywhere now:
-
-- **Schema** — the shape of a note's frontmatter (the `origin` field was
-  the first real example of this changing). Tracked by `SCHEMA_VERSION`
-  (what's installed; package-managed, `install.sh` overwrites it every
-  run) and `.anvil-applied-version` (what this vault's actual note *data*
-  has been migrated to — vault state, only `bin/upgrade-vault` writes it).
-  Fixed by **`anvil upgrade-vault`** (or `--dry-run` to preview first),
-  which runs whatever migrations (`migrations/*.sh`) are outstanding, in
-  order, updating `.anvil-applied-version` after each one succeeds — not
-  batched at the end, so a failure partway leaves accurate state instead
-  of corrupting it or silently skipping ahead.
-- **Tooling** — the anvil scripts and Skills themselves. Tracked by
-  `TOOLING_VERSION` (also package-managed). Deployment here is always a
-  full atomic overwrite, so unlike schema there's no separate "applied"
-  marker to track. Fixed by **`anvil upgrade`**, which pulls fresh
-  `bin/*`/Skills/`NOTE_TEMPLATE.md` from wherever `install.sh` recorded as
-  this vault's tooling source, in
-  `${XDG_STATE_HOME:-$HOME/.local/state}/anvil/tooling-source`,
-  **deliberately outside the vault folder** so it never syncs via
-  Syncthing (each machine's own source is specific to that machine) —
-  without needing to re-run the full interactive installer. Conservative
-  by default: it only refreshes Claude Code Skills if they were already
-  installed for this exact vault, and never touches shell rc files unless
-  `--add-to-path` is passed.
-
-  That recorded source is one of two things: a local clone path (the
-  default for a normal `./install.sh` run out of a cloned repo), or a
-  `git:<url>#<ref>` pointer — recorded automatically for a
-  `curl | bash` install (there's no durable clone to point at), or for any
-  install run with `--remote-upgrades`. With the `git:` form, `anvil
-  upgrade` fetches a fresh throwaway copy straight from GitHub every time
-  instead of expecting a local clone to still exist — so the clone used
-  for the initial install (if there was one) can be deleted right after.
-
-`bin/status` shows both versions, each with its own mismatch warning — a
-vault can be behind on schema, tooling, both, or neither, and it says
-which.
-
-**The one rule that matters most, and the reason these two commands stay
-separate:** migrations (`migrations/*.sh`, run by `upgrade-vault`) are
-pure, deterministic, idempotent scripts — never an LLM call, never a
-guess. They may only add structure (an empty field, a rename) to existing
-notes, never fabricate real values for old data — there's no safe way to
-reconstruct, for instance, what a pre-existing note's real `origin`
-should have been. `bin/upgrade-vault` adds the field empty; `bin/status`
-then flags which notes still need a real value (via `bin/audit`), and
-filling those in is a deliberate, separate, human-in-the-loop activity —
-the `/fill-vault` Skill proposes values with its reasoning shown, but writes
-only what's explicitly approved, same gate as every other anvil write.
-
-### The full upgrade chain — three separate steps, each one optional
-
-These aren't merged into one command on purpose — you can take tooling
-updates without being forced into a schema migration, or run a schema
-migration without immediately backfilling values. Each step tells you
-whether the next one is worth running; none of them run automatically:
-
-1. **`anvil upgrade`** refreshes the scripts/Skills from your source
-   repo. If that pulls in a newer `SCHEMA_VERSION` than this vault's data
-   is actually migrated to, it says so at the end — e.g. *"installed
-   schema is now 0.0.0_2; this vault's data is still at 0.0.0_1. Run
-   `bin/upgrade-vault` when ready."* You can stop here and keep using the
-   vault on its current (older) note shape indefinitely; nothing forces
-   the next step.
-2. **`anvil upgrade-vault`** runs the outstanding migrations. If any of
-   them leave real gaps (an empty `origin:`, say), it says so at the end
-   — e.g. *"1 canonical note(s) still have an empty origin... run the
-   `/fill-vault` Skill."* You can stop here too — an empty field is
-   honest, not broken.
-3. **`/fill-vault`** (a Skill, not a CLI command — it needs an LLM to
-   judge whether a proposed value is actually defensible) proposes real
-   values for whatever's still empty, with its reasoning shown, and
-   writes only what you approve.
-
-`bin/status` surfaces the same two "you're behind" warnings independently
-at any time, so you don't have to run a command just to find out whether
-one is needed.
-
-`CHANGELOG.md` is the human-readable "why" layer — one entry per version
-bump (either axis), explaining what changed and why. It's never parsed by
-either upgrade command; the migration scripts and `install.sh` are the
-actual mechanism, this file is just for people (and future sessions) to
-understand the history.
+below.
 
 ## Claude Code Skills: /recall, /note, /reflect, /anvil, /hydrate, /fill-vault
 
@@ -520,6 +319,8 @@ also available as six real Claude Code Skills — `/recall`, `/note`,
 `/reflect`, `/anvil`, `/hydrate`, and `/fill-vault` — usable directly inside a
 Claude Code session, in any project, without needing that project's
 `CLAUDE.md` wired up first.
+
+![Anvil Skills as slash commands in Claude Code](docs/images/claude-code-skills.png)
 
 These are Skills, not built-in commands: each lives at
 `~/.claude/skills/<name>/SKILL.md` (or wherever you pointed `install.sh`),
@@ -793,6 +594,220 @@ not just the first line or the final result, every step in between too
 ("Anvil: searching...", "Anvil: drafting...", "Anvil: writing it now...").
 The intent is that any anvil action is identifiable at a glance,
 throughout the whole interaction, not just bookended at the start and end.
+
+## Uninstall
+
+```
+./uninstall.sh
+```
+
+Removes only the package-managed files (`bin/recall`, `bin/note`,
+`bin/status`, `bin/anvil`, `bin/NOTE_TEMPLATE.md`, `CLAUDE_BLOCK.md`), the
+`/recall`, `/note`, `/reflect`, and `/anvil` Skills (from
+`~/.claude/skills` by default — override with `--claude-skills-dir`, same
+as `install.sh`; only those four subdirectories are touched, nothing else
+there), and the anvil `PATH` block from `~/.bashrc`/`~/.zshrc` if
+`install.sh` added one (only that clearly-marked block, nothing else in
+those files). Your notes, `index.md`, `domains.txt`, and `moc/*.md` stay
+on disk.
+
+To delete all vault content — notes, `index.md`, `domains.txt`, `moc/`,
+everything:
+
+```
+./uninstall.sh --purge
+```
+
+This asks for confirmation (type the vault path back), then — if you didn't
+already say via a flag — asks whether to also delete the `anvil/` folder
+itself, or just empty it and leave the folder in place. Keeping the folder
+(along with its `.stfolder` marker, if Syncthing created one) means an open
+Obsidian window or a Syncthing folder pointed at that path doesn't lose the
+directory out from under it; that's why it's the safer of the two, and the
+default in a non-interactive run. This is all irreversible either way.
+
+Skip that question with an explicit flag, for scripted runs:
+
+```
+./uninstall.sh --purge --keep-folder     # empty contents, keep the folder
+./uninstall.sh --purge --delete-folder   # remove the folder entirely too
+```
+
+Only use `--delete-folder` if nothing else (Obsidian, Syncthing) still
+references that exact path.
+
+## Vault structure
+
+```
+anvil/
+  index.md         # one line per note, the map of the vault
+  domains.txt      # the allowed domain list — edit this file to add one
+  CLAUDE_BLOCK.md   # generated pointer block, path pre-filled — paste into a project's CLAUDE.md
+  moc/              # maps of content — one generated file per domain
+    Software.md      # (this set matches whatever's in domains.txt —
+    Finance.md        #  the suggested default, shown here as an example,
+    Trading.md         #  not a fixed list)
+    Business.md
+    Health.md
+  semantic/         # facts that stay true (e.g. "auth is Clerk, not NextAuth")
+  procedural/       # how we build, test, deploy
+  strategic/        # decisions, and why — do not reopen without reading first
+  episodic/         # dated notes: what was tried, what happened
+  raw/              # unprocessed dumps — recall ignores this
+  _inbox/           # draft notes awaiting review — recall ignores this
+  _review/          # notes flagged for the weekly janitor pass
+  _archive/         # retired notes — recall ignores this
+  bin/
+    recall          # search canonical notes
+    note            # write a new note
+    status          # domain/subdomain tree, note counts, size, token estimate
+    NOTE_TEMPLATE.md
+```
+
+## Rules
+
+- One vault. Do not also use Claude's or Grok's built-in memory features as a
+  second knowledge store.
+- Never preload the vault into `CLAUDE.md`. Point at it; do not paste it.
+- One claim per note. Frontmatter is required on every note.
+- `recall` reads only `status: canonical` notes, and only from `semantic/`,
+  `procedural/`, and `strategic/`.
+- If you sync this vault across machines (Syncthing) and get a conflict on
+  those three folders, the copy on your primary coder-agent machine wins.
+
+## Categorizing notes: domain, subdomain, project, tags, origin
+
+Four fields, each doing a different job — the two most often confused for
+each other are `subdomain` and `project`, so read those two together:
+
+- **`domain`** — broad, few, stable. Must match a line in `domains.txt`.
+  `bin/note` enforces this: an unrecognized domain is a hard error, printing
+  the current list. You choose the starting list at install time (defaults
+  to `software`, `finance`, `trading`, `business`, `health`, but that's only
+  a suggestion). This list is meant to stay short — if a note genuinely
+  doesn't fit any of these, that's a decision for a human to make
+  deliberately (add a line to `domains.txt`), not something an agent should
+  invent on its own.
+- **`subdomain`** — free text, no enforcement. **Normally a tool,
+  technology, or language** — `syncthing`, `python`, `ssh`, `ripgrep`. Not
+  one of your own projects; that's what `project` is for. **For a domain
+  where notes usually aren't about software tooling at all** (e.g.
+  `trading`, `finance`), `subdomain` may instead be a topical sub-category
+  of that domain — `backtesting`, `portfolio-theory`,
+  `performance-metrics` — still never a project, and still worth checking
+  `bin/status`'s existing tree first to reuse a category instead of
+  inventing a near-synonym. This pattern was validated in real use: a
+  `/hydrate`-adjacent session mining general trading/quant mechanics out
+  of a codebase used exactly this shape across ten notes with no
+  `project` conflict and no invented near-duplicates.
+- **`project`** — free text, no enforcement. **One of your own named
+  projects** — `anvil`, `citeforge`, `swing-stack`. Not a tool or
+  technology; that's what `subdomain` is for. Putting the same value in
+  both fields (e.g. `subdomain: anvil` and `project: anvil` on the same
+  note) is a sign the note is miscategorized, not that it's extra-tagged.
+- **`tags`** — free-form keywords, a YAML list (`[python, cli, docker]`).
+  Not enforced, and can overlap with `subdomain` or `project` — use tags
+  for anything that would help a future search find the note, even if it's
+  not the note's main subject. Obsidian reads this field natively and
+  builds a clickable Tags pane from it across the whole vault, on top of
+  the MOC/graph structure described below.
+- **`origin`** — free text, no enforcement. **What backs the claim** — not
+  who wrote the note (that's `source`). For code, a git remote URL if one
+  exists, else the repo's local root path, else the plain working
+  directory if it isn't a git repo at all. For anything else, a book
+  title, a webpage URL, a PDF filename — whatever the claim is actually
+  citing. `bin/note` auto-detects the code case from the caller's current
+  directory; pass `--origin` explicitly to override it, or for a non-code
+  domain where nothing can be auto-detected.
+
+## Versioning and upgrades
+
+Anvil tracks **two independent version axes** — conflating them was a
+real early mistake this README used to reflect, so they're deliberately
+kept apart everywhere now:
+
+- **Schema** — the shape of a note's frontmatter (the `origin` field was
+  the first real example of this changing). Tracked by `SCHEMA_VERSION`
+  (what's installed; package-managed, `install.sh` overwrites it every
+  run) and `.anvil-applied-version` (what this vault's actual note *data*
+  has been migrated to — vault state, only `bin/upgrade-vault` writes it).
+  Fixed by **`anvil upgrade-vault`** (or `--dry-run` to preview first),
+  which runs whatever migrations (`migrations/*.sh`) are outstanding, in
+  order, updating `.anvil-applied-version` after each one succeeds — not
+  batched at the end, so a failure partway leaves accurate state instead
+  of corrupting it or silently skipping ahead.
+- **Tooling** — the anvil scripts and Skills themselves. Tracked by
+  `TOOLING_VERSION` (also package-managed). Deployment here is always a
+  full atomic overwrite, so unlike schema there's no separate "applied"
+  marker to track. Fixed by **`anvil upgrade`**, which pulls fresh
+  `bin/*`/Skills/`NOTE_TEMPLATE.md` from wherever `install.sh` recorded as
+  this vault's tooling source, in
+  `${XDG_STATE_HOME:-$HOME/.local/state}/anvil/tooling-source`,
+  **deliberately outside the vault folder** so it never syncs via
+  Syncthing (each machine's own source is specific to that machine) —
+  without needing to re-run the full interactive installer. Conservative
+  by default: it only refreshes Claude Code Skills if they were already
+  installed for this exact vault, and never touches shell rc files unless
+  `--add-to-path` is passed.
+
+  That recorded source is one of two things: a local clone path (the
+  default for a normal `./install.sh` run out of a cloned repo), or a
+  `git:<url>#<ref>` pointer — recorded automatically for a
+  `curl | bash` install (there's no durable clone to point at), or for any
+  install run with `--remote-upgrades`. With the `git:` form, `anvil
+  upgrade` fetches a fresh throwaway copy straight from GitHub every time
+  instead of expecting a local clone to still exist — so the clone used
+  for the initial install (if there was one) can be deleted right after.
+
+`bin/status` shows both versions, each with its own mismatch warning — a
+vault can be behind on schema, tooling, both, or neither, and it says
+which.
+
+**The one rule that matters most, and the reason these two commands stay
+separate:** migrations (`migrations/*.sh`, run by `upgrade-vault`) are
+pure, deterministic, idempotent scripts — never an LLM call, never a
+guess. They may only add structure (an empty field, a rename) to existing
+notes, never fabricate real values for old data — there's no safe way to
+reconstruct, for instance, what a pre-existing note's real `origin`
+should have been. `bin/upgrade-vault` adds the field empty; `bin/status`
+then flags which notes still need a real value (via `bin/audit`), and
+filling those in is a deliberate, separate, human-in-the-loop activity —
+the `/fill-vault` Skill proposes values with its reasoning shown, but writes
+only what's explicitly approved, same gate as every other anvil write.
+
+### The full upgrade chain — three separate steps, each one optional
+
+These aren't merged into one command on purpose — you can take tooling
+updates without being forced into a schema migration, or run a schema
+migration without immediately backfilling values. Each step tells you
+whether the next one is worth running; none of them run automatically:
+
+1. **`anvil upgrade`** refreshes the scripts/Skills from your source
+   repo. If that pulls in a newer `SCHEMA_VERSION` than this vault's data
+   is actually migrated to, it says so at the end — e.g. *"installed
+   schema is now 0.0.0_2; this vault's data is still at 0.0.0_1. Run
+   `bin/upgrade-vault` when ready."* You can stop here and keep using the
+   vault on its current (older) note shape indefinitely; nothing forces
+   the next step.
+2. **`anvil upgrade-vault`** runs the outstanding migrations. If any of
+   them leave real gaps (an empty `origin:`, say), it says so at the end
+   — e.g. *"1 canonical note(s) still have an empty origin... run the
+   `/fill-vault` Skill."* You can stop here too — an empty field is
+   honest, not broken.
+3. **`/fill-vault`** (a Skill, not a CLI command — it needs an LLM to
+   judge whether a proposed value is actually defensible) proposes real
+   values for whatever's still empty, with its reasoning shown, and
+   writes only what you approve.
+
+`bin/status` surfaces the same two "you're behind" warnings independently
+at any time, so you don't have to run a command just to find out whether
+one is needed.
+
+`CHANGELOG.md` is the human-readable "why" layer — one entry per version
+bump (either axis), explaining what changed and why. It's never parsed by
+either upgrade command; the migration scripts and `install.sh` are the
+actual mechanism, this file is just for people (and future sessions) to
+understand the history.
 
 ## Viewing the vault in Obsidian
 
