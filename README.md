@@ -11,310 +11,11 @@ A folder of small markdown notes, one claim per file, with YAML frontmatter.
 Not a database. Not preloaded into any agent's context. Agents search it
 on demand with `recall`, and add to it on demand with `note`.
 
-## Prerequisites
-
-**Required:**
-
-- **macOS or Linux.** These scripts avoid bash-4-only syntax (no
-  `declare -A`, no `${var^^}`) specifically so they run unmodified on
-  macOS's default `/bin/bash` (3.2) — Linux's typically newer default bash
-  works fine too, without needing anything installed for that reason.
-- **`ripgrep` (`rg`)** — required by `bin/recall`. `install.sh` installs it
-  automatically via Homebrew if it's missing; nothing to do ahead of time.
-- **Claude Code and/or Grok Build.** Anvil's whole point is an LLM agent
-  reading and writing the vault on its own — a plain human typing
-  `bin/note`/`bin/recall` by hand works too, but that's not what this tool
-  is built for. `install.sh` wires up the `/recall`, `/note`, `/reflect`,
-  `/anvil`, `/hydrate`, and `/fill-vault` Skills automatically if Claude
-  Code's default location (`~/.claude`) is found; Grok Build support is the
-  same `CLAUDE_BLOCK.md`/`AGENTS.md` pointer, wired by hand (see "Wiring a
-  project to use anvil" below) since Grok Build has no Skills directory to
-  auto-install into.
-
-**Optional:**
-
-- **Homebrew** — strongly recommended, not strictly required. `install.sh`
-  uses it to auto-install `ripgrep` and, in multi-machine mode, Syncthing.
-  Without it, the installer still runs, but prints a manual-install link
-  instead of installing them for you.
-- **Syncthing (optional)** — only needed for a multi-machine vault.
-  `install.sh` installs it automatically via Homebrew if you choose
-  multi-machine mode and it's missing. A single-machine vault needs it not
-  at all.
-- **Obsidian (optional)** — only for browsing the vault visually (see
-  "Viewing the vault in Obsidian" below). Agents never need it, and
-  nothing in `bin/recall` or `bin/note` depends on it.
-- **`pgrep` (optional)** — used only in the headless-Syncthing
-  tunnel-teardown instructions. Ships with macOS by default; nothing to
-  install.
-
-## Install
-
-```
-./install.sh
-```
-
-Or, with no local checkout at all:
-
-```
-curl -fsSL https://raw.githubusercontent.com/OnyxDrift/anvil/main/install.sh | bash
-```
-
-Must be piped to `bash`, not generic `sh` — this script uses bash-only
-array syntax that `dash`/POSIX-mode `sh` (the usual `/bin/sh` on Linux and
-macOS) can't run. This form fetches a throwaway copy of the repo into a
-temp dir first (`git clone` if `git` is on PATH, otherwise `curl`+`tar`),
-runs the installer from there, then deletes it — nothing is left behind
-except what gets installed into the vault and, optionally, Claude Code's
-skills directory. Pass flags after `--`, e.g.
-`curl -fsSL <url>/install.sh | bash -s -- --multi-machine`. Point
-`ANVIL_REPO_URL` / `ANVIL_REPO_REF` (env vars) at a fork or different
-branch if you don't want `OnyxDrift/anvil`/`main`.
-
-Run with no flags, it asks up to six questions, in order:
-
-1. **Single machine, or shared across more than one?** Single machine installs
-   nothing extra. Multi machine installs Syncthing on this machine and prints
-   the steps to share the vault folder to your other machines over your LAN.
-2. **New vault, or point at one that already exists?** New scaffolds
-   `index.md`, `domains.txt`, and `moc/*.md` from scratch. Existing assumes
-   the path already has vault content — useful when Syncthing has already
-   delivered a copy of the vault to this machine before you run the
-   installer here, and you just need `bin/recall`, `bin/note`, and the note
-   template laid down.
-3. **What path?** Defaults to `$HOME/.anvil`.
-4. **Only if `domains.txt` doesn't already exist at that path: what domains
-   should this vault start with?** Comma-separated, defaults to `software,
-   finance, trading, business, health` — but this is only a suggestion.
-   Type your own list instead if you're building a "second brain" around
-   different areas entirely (say, `art, woodworking, parenting`); nothing
-   about the tool assumes this repo's original taxonomy.
-5. **Only if Claude Code's default Skills directory (`~/.claude/skills`)
-   doesn't already exist: where is it, so `/recall`, `/note`, `/reflect`,
-   `/anvil`, `/hydrate`, and `/fill-vault` can be installed there?** Leave
-   blank to skip — nothing else about anvil depends on this. See "Claude
-   Code Skills" below for what these actually do.
-6. **Add the `anvil` command to your PATH?** Adds one clearly-marked block
-   to `~/.bashrc` and/or `~/.zshrc` (whichever exist) so `anvil recall`,
-   `anvil note`, `anvil status`, and `anvil init` work from any directory,
-   in any new terminal. See "The `anvil` CLI" below.
-
-If your answer to question 2 doesn't match what's actually at the path, the
-installer tells you and does the safe thing anyway — it never overwrites
-existing notes, `index.md`, `domains.txt`, or `moc/*.md`, whichever answer
-you gave.
-
-All six questions can be skipped with flags, for scripted or repeat installs:
-
-```
-./install.sh --single-machine --new-vault --path /some/other/dir --domains "art, woodworking, parenting" --skip-claude-skills --skip-add-to-path
-./install.sh --multi-machine --existing-vault --path /some/other/dir --claude-skills-dir ~/.claude/skills --add-to-path
-```
-
-or by exporting `ANVIL_MODE` (`single`/`multi`), `ANVIL_VAULT_ACTION`
-(`new`/`existing`), `ANVIL_HOME`, `ANVIL_DOMAINS`, and
-`ANVIL_CLAUDE_SKILLS_DIR` before running. Piped installs (`curl | bash`,
-see above) have no terminal to prompt on, so they default to
-single-machine, new-vault, the vault's standard path, the suggested domain
-list, and installing Skills only if `~/.claude/skills` already exists,
-unless those flags or environment variables say otherwise — pass
-`--non-interactive` to get that same behavior explicitly in a script.
-
-### Adding a domain later
-
-`domains.txt` is plain user content — `install.sh` creates it once and never
-overwrites it, so editing it directly is always safe. To add a domain:
-
-1. Open `domains.txt` and add a line (lowercase, one word or a short phrase,
-   no special formatting needed).
-2. Re-run `install.sh` (any mode/vault-action flags, it doesn't matter —
-   this step only touches `moc/`).
-3. It creates the matching `moc/<Domain>.md` for anything new in the file,
-   and leaves everything else untouched.
-
-There's no code to edit and no template to update — `moc/` generation reads
-`domains.txt` directly every time the installer runs, not a fixed list baked
-into the script.
-
-**If a domain gets added through `/note` or `/reflect` instead of by hand,
-the Skill creates the matching `moc/<Domain>.md` itself**, in the same step
-as adding the line to `domains.txt` — since those Skills don't invoke
-`install.sh`'s own generation logic, they'd otherwise leave the domain
-with no MOC file, silently (this happened once: `craft` was added to
-`domains.txt` with no `moc/Craft.md`, unnoticed until manually checked).
-If you ever add a domain by hand outside a Skill and skip re-running
-`install.sh` afterward, you'll hit the same gap — running the installer
-again is the fix in that case.
-
-Re-running `install.sh` is safe. It upgrades every package-managed file
-(`bin/*`, `migrations/*`, `SCHEMA_VERSION`, `TOOLING_VERSION`,
-`NOTE_TEMPLATE.md`, `CLAUDE_BLOCK.md`) and all six Claude Code Skills (if
-installed) every time. It never touches existing notes, `index.md`,
-`domains.txt`, `moc/*.md`, or the vault's own applied-schema marker —
-those are your content and vault state, not package files. It also does
-not re-ask questions you already answered via a flag or environment
-variable. (For refreshing just the tooling on an existing vault without a
-full re-run of this script, see `anvil upgrade` instead, under "The
-`anvil` CLI" below.)
-
-Syncthing's device pairing needs one click on each machine — that part cannot
-be scripted. Choosing multi-machine mode gets you to the pairing screen and
-prints the exact steps for both this machine and each client; it does not
-click through the pairing for you.
-
-## Usage
-
-Write a note:
-
-```
-anvil/bin/note --type procedural --domain software --subdomain bash \
-  --project anvil --tags "install-script" \
-  --title "How anvil's installer is built and tested"
-```
-
-This creates a dated file under the right folder, pre-filled with frontmatter,
-and prints the path so you can fill in the body. `--subdomain`, `--project`,
-and `--tags` are all optional.
-
-If `--domain` doesn't match anything in `domains.txt`, the command fails and
-prints the current list instead of writing anything:
-
-```
-$ anvil/bin/note --type semantic --domain widgets --title "..."
-invalid --domain: 'widgets' is not in .../anvil/domains.txt
-Existing domains:
-  - software
-  - finance
-  - trading
-  - business
-  - health
-...
-```
-
-Search canonical notes:
-
-```
-anvil/bin/recall "auth"
-```
-
-Prints up to 4 matching notes in full. It does not dump the whole vault.
-`recall` searches full note content, so a match on a `tags:` or `subdomain:`
-value works exactly like a match in the title or body.
-
-## The `anvil` CLI
-
-If you answered yes to question 6 during install (or ran `--add-to-path`),
-the vault's `bin/` directory is on your `PATH`, and everything above is
-also reachable as short subcommands from any directory, in any project:
-
-```
-anvil recall "auth"
-anvil note --type semantic --domain software --title "..."
-anvil status
-anvil usage
-anvil audit --field origin
-anvil upgrade-vault
-anvil upgrade
-anvil path
-```
-
-`anvil path` prints the vault's root directory — useful in scripts, or
-when you've forgotten which path you installed to.
-
-### `anvil usage`
-
-Every `note` and `recall` call — whether run through a Skill or straight
-from the CLI — appends one line to a small local log at
-`${XDG_STATE_HOME:-$HOME/.local/state}/anvil/usage.tsv`. This log lives
-**outside** the vault folder on purpose, so it never syncs via Syncthing —
-each machine tracks only its own activity, never mixed with another's.
-
-`anvil usage` summarizes it: total reads/writes on this machine, the
-`/recall` hit rate (how often a query actually finds a matching note —
-the real signal for whether the vault is worth having), a rough
-characters-per-4 token estimate per write and per successful recall, and
-a day-by-day activity table for the last two weeks. It's a local trend
-line, not a claim about real token savings — comparing a `/recall` hit
-against what re-deriving the same answer from scratch would have cost
-isn't something this can observe, since only one of those two paths
-actually happens in a given turn.
-
-### `anvil init`
-
-Appends this vault's `CLAUDE_BLOCK.md` — the same generated, path-resolved
-block described below — to a project's `CLAUDE.md`, without needing to
-open and paste it by hand:
-
-```
-cd ~/code/some-project
-anvil init
-```
-
-Creates `CLAUDE.md` if it doesn't exist, or appends to it (with a `---`
-separator) if it does. Safe to re-run — the `## Anvil` section is
-package-managed content living inside an otherwise user-owned file, same
-idea as `bin/*` always refreshing while your notes never do: if the
-target already has one, `anvil init` **refreshes it in place** (bounded
-to exactly that section — from the `## Anvil` heading to the next `## `
-heading or end of file, everything else in the file untouched) if it's
-stale, or does nothing and says so if it's already current. It compares
-content, not just presence, so an old block left over from before anvil's
-own docs changed (e.g. a vault path from before a `--path` move) actually
-gets caught and fixed, not silently treated as done.
-
-To target a different directory (e.g. one package in a monorepo, without
-`cd`-ing there first):
-
-```
-anvil init --path ~/code/some-monorepo/packages/api
-```
-
-### Companion tools: `anvil install-additional-packages`, `anvil open-vault`
-
-Both fully optional — nothing else in anvil depends on either.
-
-```
-anvil install-additional-packages
-anvil open-vault
-anvil open-vault ~/some/other/vault
-```
-
-`install-additional-packages` installs
-[emeraldian](https://github.com/iamrohithrnair/emeraldian), a TUI that
-reads an Obsidian-format vault directly — the same plain markdown files
-anvil already writes, no conversion or import — and shows notes plus a
-force-directed graph, right in the terminal. Installed via Homebrew if
-available (matching how `install.sh` already auto-installs `ripgrep`/
-Syncthing); without Homebrew, it prints manual `cargo install emeraldian`
-or `curl | sh` instructions instead of running them for you.
-
-`open-vault` opens a vault in emeraldian — defaults to this vault's root,
-or pass a path to open a different one. Requires emeraldian to already be
-installed; it won't install it for you as a side effect.
-
-Two other real, verified candidates were considered and passed over:
-`clin-rs` is heavier and more opinionated than a plain viewer needs
-(built-in encryption, canvas editing, drawing tools); `obsitui` has too
-little community traction (12 stars, no packaged install, manual `npm`
-build only) to depend on for something anvil auto-installs.
-
-### Removing it
-
-`anvil` is added via one clearly-marked block in `~/.bashrc` and/or
-`~/.zshrc`:
-```
-# >>> anvil PATH (managed by anvil/install.sh) >>>
-export PATH="$HOME/.anvil/bin:$PATH"
-# <<< anvil PATH <<<
-```
-`uninstall.sh` finds and removes exactly this block (nothing else in
-those files is touched) as part of its normal cleanup — see "Uninstall"
-below.
-
 ## Claude Code Skills: /recall, /note, /reflect, /anvil, /hydrate, /fill-vault
 
-Everything above works from a plain terminal. If `install.sh` installed
-Skills for you (question 5, or `--claude-skills-dir`), the same behavior is
+Everything here also works from a plain terminal — see Usage and The
+`anvil` CLI below. If `install.sh` installed Skills for you (question 5, or
+`--claude-skills-dir`), the same behavior is
 also available as six real Claude Code Skills — `/recall`, `/note`,
 `/reflect`, `/anvil`, `/hydrate`, and `/fill-vault` — usable directly inside a
 Claude Code session, in any project, without needing that project's
@@ -594,6 +295,308 @@ not just the first line or the final result, every step in between too
 ("Anvil: searching...", "Anvil: drafting...", "Anvil: writing it now...").
 The intent is that any anvil action is identifiable at a glance,
 throughout the whole interaction, not just bookended at the start and end.
+
+## The `anvil` CLI
+
+Once installed (see Install below — say yes to its PATH question, or run
+`--add-to-path`), the vault's `bin/` directory is on your `PATH`, and every
+`bin/*` script (the same ones `bin/note`/`bin/recall` examples in Usage
+below use directly) is also reachable as a short subcommand, from any
+directory, in any project:
+
+```
+anvil recall "auth"
+anvil note --type semantic --domain software --title "..."
+anvil status
+anvil usage
+anvil audit --field origin
+anvil upgrade-vault
+anvil upgrade
+anvil path
+```
+
+`anvil path` prints the vault's root directory — useful in scripts, or
+when you've forgotten which path you installed to.
+
+### `anvil usage`
+
+Every `note` and `recall` call — whether run through a Skill or straight
+from the CLI — appends one line to a small local log at
+`${XDG_STATE_HOME:-$HOME/.local/state}/anvil/usage.tsv`. This log lives
+**outside** the vault folder on purpose, so it never syncs via Syncthing —
+each machine tracks only its own activity, never mixed with another's.
+
+`anvil usage` summarizes it: total reads/writes on this machine, the
+`/recall` hit rate (how often a query actually finds a matching note —
+the real signal for whether the vault is worth having), a rough
+characters-per-4 token estimate per write and per successful recall, and
+a day-by-day activity table for the last two weeks. It's a local trend
+line, not a claim about real token savings — comparing a `/recall` hit
+against what re-deriving the same answer from scratch would have cost
+isn't something this can observe, since only one of those two paths
+actually happens in a given turn.
+
+### `anvil init`
+
+Appends this vault's `CLAUDE_BLOCK.md` — the same generated, path-resolved
+block described below — to a project's `CLAUDE.md`, without needing to
+open and paste it by hand:
+
+```
+cd ~/code/some-project
+anvil init
+```
+
+Creates `CLAUDE.md` if it doesn't exist, or appends to it (with a `---`
+separator) if it does. Safe to re-run — the `## Anvil` section is
+package-managed content living inside an otherwise user-owned file, same
+idea as `bin/*` always refreshing while your notes never do: if the
+target already has one, `anvil init` **refreshes it in place** (bounded
+to exactly that section — from the `## Anvil` heading to the next `## `
+heading or end of file, everything else in the file untouched) if it's
+stale, or does nothing and says so if it's already current. It compares
+content, not just presence, so an old block left over from before anvil's
+own docs changed (e.g. a vault path from before a `--path` move) actually
+gets caught and fixed, not silently treated as done.
+
+To target a different directory (e.g. one package in a monorepo, without
+`cd`-ing there first):
+
+```
+anvil init --path ~/code/some-monorepo/packages/api
+```
+
+### Companion tools: `anvil install-additional-packages`, `anvil open-vault`
+
+Both fully optional — nothing else in anvil depends on either.
+
+```
+anvil install-additional-packages
+anvil open-vault
+anvil open-vault ~/some/other/vault
+```
+
+`install-additional-packages` installs
+[emeraldian](https://github.com/iamrohithrnair/emeraldian), a TUI that
+reads an Obsidian-format vault directly — the same plain markdown files
+anvil already writes, no conversion or import — and shows notes plus a
+force-directed graph, right in the terminal. Installed via Homebrew if
+available (matching how `install.sh` already auto-installs `ripgrep`/
+Syncthing); without Homebrew, it prints manual `cargo install emeraldian`
+or `curl | sh` instructions instead of running them for you.
+
+`open-vault` opens a vault in emeraldian — defaults to this vault's root,
+or pass a path to open a different one. Requires emeraldian to already be
+installed; it won't install it for you as a side effect.
+
+Two other real, verified candidates were considered and passed over:
+`clin-rs` is heavier and more opinionated than a plain viewer needs
+(built-in encryption, canvas editing, drawing tools); `obsitui` has too
+little community traction (12 stars, no packaged install, manual `npm`
+build only) to depend on for something anvil auto-installs.
+
+### Removing it
+
+`anvil` is added via one clearly-marked block in `~/.bashrc` and/or
+`~/.zshrc`:
+```
+# >>> anvil PATH (managed by anvil/install.sh) >>>
+export PATH="$HOME/.anvil/bin:$PATH"
+# <<< anvil PATH <<<
+```
+`uninstall.sh` finds and removes exactly this block (nothing else in
+those files is touched) as part of its normal cleanup — see "Uninstall"
+below.
+
+## Prerequisites
+
+**Required:**
+
+- **macOS or Linux.** These scripts avoid bash-4-only syntax (no
+  `declare -A`, no `${var^^}`) specifically so they run unmodified on
+  macOS's default `/bin/bash` (3.2) — Linux's typically newer default bash
+  works fine too, without needing anything installed for that reason.
+- **`ripgrep` (`rg`)** — required by `bin/recall`. `install.sh` installs it
+  automatically via Homebrew if it's missing; nothing to do ahead of time.
+- **Claude Code and/or Grok Build.** Anvil's whole point is an LLM agent
+  reading and writing the vault on its own — a plain human typing
+  `bin/note`/`bin/recall` by hand works too, but that's not what this tool
+  is built for. `install.sh` wires up the `/recall`, `/note`, `/reflect`,
+  `/anvil`, `/hydrate`, and `/fill-vault` Skills automatically if Claude
+  Code's default location (`~/.claude`) is found; Grok Build support is the
+  same `CLAUDE_BLOCK.md`/`AGENTS.md` pointer, wired by hand (see "Wiring a
+  project to use anvil" below) since Grok Build has no Skills directory to
+  auto-install into.
+
+**Optional:**
+
+- **Homebrew** — strongly recommended, not strictly required. `install.sh`
+  uses it to auto-install `ripgrep` and, in multi-machine mode, Syncthing.
+  Without it, the installer still runs, but prints a manual-install link
+  instead of installing them for you.
+- **Syncthing (optional)** — only needed for a multi-machine vault.
+  `install.sh` installs it automatically via Homebrew if you choose
+  multi-machine mode and it's missing. A single-machine vault needs it not
+  at all.
+- **Obsidian (optional)** — only for browsing the vault visually (see
+  "Viewing the vault in Obsidian" below). Agents never need it, and
+  nothing in `bin/recall` or `bin/note` depends on it.
+- **`pgrep` (optional)** — used only in the headless-Syncthing
+  tunnel-teardown instructions. Ships with macOS by default; nothing to
+  install.
+
+## Install
+
+```
+./install.sh
+```
+
+Or, with no local checkout at all:
+
+```
+curl -fsSL https://raw.githubusercontent.com/OnyxDrift/anvil/main/install.sh | bash
+```
+
+Must be piped to `bash`, not generic `sh` — this script uses bash-only
+array syntax that `dash`/POSIX-mode `sh` (the usual `/bin/sh` on Linux and
+macOS) can't run. This form fetches a throwaway copy of the repo into a
+temp dir first (`git clone` if `git` is on PATH, otherwise `curl`+`tar`),
+runs the installer from there, then deletes it — nothing is left behind
+except what gets installed into the vault and, optionally, Claude Code's
+skills directory. Pass flags after `--`, e.g.
+`curl -fsSL <url>/install.sh | bash -s -- --multi-machine`. Point
+`ANVIL_REPO_URL` / `ANVIL_REPO_REF` (env vars) at a fork or different
+branch if you don't want `OnyxDrift/anvil`/`main`.
+
+Run with no flags, it asks up to six questions, in order:
+
+1. **Single machine, or shared across more than one?** Single machine installs
+   nothing extra. Multi machine installs Syncthing on this machine and prints
+   the steps to share the vault folder to your other machines over your LAN.
+2. **New vault, or point at one that already exists?** New scaffolds
+   `index.md`, `domains.txt`, and `moc/*.md` from scratch. Existing assumes
+   the path already has vault content — useful when Syncthing has already
+   delivered a copy of the vault to this machine before you run the
+   installer here, and you just need `bin/recall`, `bin/note`, and the note
+   template laid down.
+3. **What path?** Defaults to `$HOME/.anvil`.
+4. **Only if `domains.txt` doesn't already exist at that path: what domains
+   should this vault start with?** Comma-separated, defaults to `software,
+   finance, trading, business, health` — but this is only a suggestion.
+   Type your own list instead if you're building a "second brain" around
+   different areas entirely (say, `art, woodworking, parenting`); nothing
+   about the tool assumes this repo's original taxonomy.
+5. **Only if Claude Code's default Skills directory (`~/.claude/skills`)
+   doesn't already exist: where is it, so `/recall`, `/note`, `/reflect`,
+   `/anvil`, `/hydrate`, and `/fill-vault` can be installed there?** Leave
+   blank to skip — nothing else about anvil depends on this. See "Claude
+   Code Skills" above for what these actually do.
+6. **Add the `anvil` command to your PATH?** Adds one clearly-marked block
+   to `~/.bashrc` and/or `~/.zshrc` (whichever exist) so `anvil recall`,
+   `anvil note`, `anvil status`, and `anvil init` work from any directory,
+   in any new terminal. See "The `anvil` CLI" above.
+
+If your answer to question 2 doesn't match what's actually at the path, the
+installer tells you and does the safe thing anyway — it never overwrites
+existing notes, `index.md`, `domains.txt`, or `moc/*.md`, whichever answer
+you gave.
+
+All six questions can be skipped with flags, for scripted or repeat installs:
+
+```
+./install.sh --single-machine --new-vault --path /some/other/dir --domains "art, woodworking, parenting" --skip-claude-skills --skip-add-to-path
+./install.sh --multi-machine --existing-vault --path /some/other/dir --claude-skills-dir ~/.claude/skills --add-to-path
+```
+
+or by exporting `ANVIL_MODE` (`single`/`multi`), `ANVIL_VAULT_ACTION`
+(`new`/`existing`), `ANVIL_HOME`, `ANVIL_DOMAINS`, and
+`ANVIL_CLAUDE_SKILLS_DIR` before running. Piped installs (`curl | bash`,
+see above) have no terminal to prompt on, so they default to
+single-machine, new-vault, the vault's standard path, the suggested domain
+list, and installing Skills only if `~/.claude/skills` already exists,
+unless those flags or environment variables say otherwise — pass
+`--non-interactive` to get that same behavior explicitly in a script.
+
+### Adding a domain later
+
+`domains.txt` is plain user content — `install.sh` creates it once and never
+overwrites it, so editing it directly is always safe. To add a domain:
+
+1. Open `domains.txt` and add a line (lowercase, one word or a short phrase,
+   no special formatting needed).
+2. Re-run `install.sh` (any mode/vault-action flags, it doesn't matter —
+   this step only touches `moc/`).
+3. It creates the matching `moc/<Domain>.md` for anything new in the file,
+   and leaves everything else untouched.
+
+There's no code to edit and no template to update — `moc/` generation reads
+`domains.txt` directly every time the installer runs, not a fixed list baked
+into the script.
+
+**If a domain gets added through `/note` or `/reflect` instead of by hand,
+the Skill creates the matching `moc/<Domain>.md` itself**, in the same step
+as adding the line to `domains.txt` — since those Skills don't invoke
+`install.sh`'s own generation logic, they'd otherwise leave the domain
+with no MOC file, silently (this happened once: `craft` was added to
+`domains.txt` with no `moc/Craft.md`, unnoticed until manually checked).
+If you ever add a domain by hand outside a Skill and skip re-running
+`install.sh` afterward, you'll hit the same gap — running the installer
+again is the fix in that case.
+
+Re-running `install.sh` is safe. It upgrades every package-managed file
+(`bin/*`, `migrations/*`, `SCHEMA_VERSION`, `TOOLING_VERSION`,
+`NOTE_TEMPLATE.md`, `CLAUDE_BLOCK.md`) and all six Claude Code Skills (if
+installed) every time. It never touches existing notes, `index.md`,
+`domains.txt`, `moc/*.md`, or the vault's own applied-schema marker —
+those are your content and vault state, not package files. It also does
+not re-ask questions you already answered via a flag or environment
+variable. (For refreshing just the tooling on an existing vault without a
+full re-run of this script, see `anvil upgrade` instead, under "The
+`anvil` CLI" above.)
+
+Syncthing's device pairing needs one click on each machine — that part cannot
+be scripted. Choosing multi-machine mode gets you to the pairing screen and
+prints the exact steps for both this machine and each client; it does not
+click through the pairing for you.
+
+## Usage
+
+Write a note:
+
+```
+anvil/bin/note --type procedural --domain software --subdomain bash \
+  --project anvil --tags "install-script" \
+  --title "How anvil's installer is built and tested"
+```
+
+This creates a dated file under the right folder, pre-filled with frontmatter,
+and prints the path so you can fill in the body. `--subdomain`, `--project`,
+and `--tags` are all optional.
+
+If `--domain` doesn't match anything in `domains.txt`, the command fails and
+prints the current list instead of writing anything:
+
+```
+$ anvil/bin/note --type semantic --domain widgets --title "..."
+invalid --domain: 'widgets' is not in .../anvil/domains.txt
+Existing domains:
+  - software
+  - finance
+  - trading
+  - business
+  - health
+...
+```
+
+Search canonical notes:
+
+```
+anvil/bin/recall "auth"
+```
+
+Prints up to 4 matching notes in full. It does not dump the whole vault.
+`recall` searches full note content, so a match on a `tags:` or `subdomain:`
+value works exactly like a match in the title or body.
 
 ## Uninstall
 
