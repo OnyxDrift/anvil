@@ -38,13 +38,47 @@ if [ ! -f "$SOURCE_FILE" ]; then
   echo "vault, existing-vault mode) to record where it lives, then retry." >&2
   exit 1
 fi
-SOURCE_DIR=$(tr -d '[:space:]' < "$SOURCE_FILE")
+SOURCE_VALUE=$(tr -d '[:space:]' < "$SOURCE_FILE")
 
-if [ ! -f "$SOURCE_DIR/install.sh" ]; then
-  echo "error: recorded source repo not found or moved: $SOURCE_DIR" >&2
-  echo "Re-run install.sh from wherever the anvil repo lives now to fix this." >&2
-  exit 1
-fi
+# Two forms: a local clone path (the default, from a normal `install.sh`
+# run out of a cloned repo), or a "git:<url>#<ref>" pointer (recorded when
+# install.sh was piped via curl | bash, or run with --remote-upgrades) —
+# in that case, fetch a throwaway copy from GitHub every time instead of
+# expecting a durable local clone to still be there.
+ANVIL_UPGRADE_TMP=""
+cleanup_upgrade_tmp() { [ -n "$ANVIL_UPGRADE_TMP" ] && rm -rf "$ANVIL_UPGRADE_TMP"; }
+trap cleanup_upgrade_tmp EXIT
+
+case "$SOURCE_VALUE" in
+  git:*)
+    REMOTE_SPEC="${SOURCE_VALUE#git:}"
+    REMOTE_URL="${REMOTE_SPEC%%#*}"
+    REMOTE_REF="main"
+    case "$REMOTE_SPEC" in *"#"*) REMOTE_REF="${REMOTE_SPEC##*#}" ;; esac
+
+    ANVIL_UPGRADE_TMP="$(mktemp -d "${TMPDIR:-/tmp}/anvil-upgrade.XXXXXX")"
+    echo "Fetching anvil ($REMOTE_REF) from $REMOTE_URL ..."
+    if command -v git >/dev/null 2>&1; then
+      git clone --quiet --depth 1 --branch "$REMOTE_REF" "$REMOTE_URL" "$ANVIL_UPGRADE_TMP"
+    elif command -v curl >/dev/null 2>&1 && command -v tar >/dev/null 2>&1; then
+      REMOTE_HTTP_URL="$(printf '%s' "$REMOTE_URL" | sed -E 's#\.git$##; s#^git@github\.com:#https://github.com/#')"
+      curl -fsSL "$REMOTE_HTTP_URL/archive/refs/heads/$REMOTE_REF.tar.gz" \
+        | tar -xz -C "$ANVIL_UPGRADE_TMP" --strip-components=1
+    else
+      echo "error: need either git, or curl+tar, on PATH to fetch anvil from $REMOTE_URL." >&2
+      exit 1
+    fi
+    SOURCE_DIR="$ANVIL_UPGRADE_TMP"
+    ;;
+  *)
+    SOURCE_DIR="$SOURCE_VALUE"
+    if [ ! -f "$SOURCE_DIR/install.sh" ]; then
+      echo "error: recorded source repo not found or moved: $SOURCE_DIR" >&2
+      echo "Re-run install.sh from wherever the anvil repo lives now to fix this." >&2
+      exit 1
+    fi
+    ;;
+esac
 
 INSTALLED_TOOLING="<none>"
 [ -f "$ANVIL_ROOT/TOOLING_VERSION" ] && INSTALLED_TOOLING=$(tr -d '[:space:]' < "$ANVIL_ROOT/TOOLING_VERSION")
@@ -69,16 +103,28 @@ if [ "$CLAUDE_SKILLS_DIR_GIVEN" = false ]; then
 fi
 
 echo "Refreshing anvil tooling: $INSTALLED_TOOLING -> $SOURCE_TOOLING"
-echo "  source: $SOURCE_DIR"
+case "$SOURCE_VALUE" in
+  git:*) echo "  source: $REMOTE_URL (#$REMOTE_REF)" ;;
+  *)     echo "  source: $SOURCE_DIR" ;;
+esac
+
+# Re-passing --remote-upgrades (when that's how this vault is tracked) keeps
+# tooling-source pointing at the remote afterward — otherwise install.sh
+# would overwrite it with $SOURCE_DIR, which for the git: case is this
+# run's throwaway temp clone, gone the moment this script exits.
+REMOTE_FLAG=""
+case "$SOURCE_VALUE" in git:*) REMOTE_FLAG="--remote-upgrades" ;; esac
 
 if [ -n "$CLAUDE_SKILLS_DIR" ]; then
   ANVIL_HOME="$ANVIL_ROOT" ANVIL_VAULT_ACTION=existing ANVIL_MODE=single \
     ANVIL_CLAUDE_SKILLS_DIR="$CLAUDE_SKILLS_DIR" ANVIL_ADD_TO_PATH="$ADD_TO_PATH" \
-    bash "$SOURCE_DIR/install.sh" --non-interactive
+    ANVIL_REPO_URL="${REMOTE_URL:-}" ANVIL_REPO_REF="${REMOTE_REF:-}" \
+    bash "$SOURCE_DIR/install.sh" --non-interactive $REMOTE_FLAG
 else
   ANVIL_HOME="$ANVIL_ROOT" ANVIL_VAULT_ACTION=existing ANVIL_MODE=single \
     ANVIL_ADD_TO_PATH="$ADD_TO_PATH" \
-    bash "$SOURCE_DIR/install.sh" --non-interactive --skip-claude-skills
+    ANVIL_REPO_URL="${REMOTE_URL:-}" ANVIL_REPO_REF="${REMOTE_REF:-}" \
+    bash "$SOURCE_DIR/install.sh" --non-interactive --skip-claude-skills $REMOTE_FLAG
 fi
 
 echo "Tooling refreshed. Now at $SOURCE_TOOLING."

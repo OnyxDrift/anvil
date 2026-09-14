@@ -13,7 +13,44 @@
 # Flags below let you skip any/all of these prompts for scripted or repeat installs.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Where to fetch anvil from when this script isn't running from a full
+# on-disk checkout (see the self-fetch block below), and what a later
+# `anvil upgrade` re-fetches from if --remote-upgrades records a remote
+# pointer instead of a local clone path.
+ANVIL_REPO_URL="${ANVIL_REPO_URL:-https://github.com/OnyxDrift/anvil.git}"
+ANVIL_REPO_REF="${ANVIL_REPO_REF:-main}"
+
+# Self-fetch: this script also works piped straight into bash
+# (curl -fsSL .../install.sh | bash), where ${BASH_SOURCE[0]} isn't a real
+# file and there's no sibling bin/, templates/, etc. to read from. Detect
+# that case, fetch a full copy of the repo into a throwaway temp dir, then
+# re-run this exact script from there with the original arguments plus
+# --remote-upgrades (so tooling-source records the GitHub URL instead of
+# the temp dir, which is deleted right after). The real install logic below
+# never has to know the difference.
+ANVIL_SELF="${BASH_SOURCE[0]:-}"
+if [ -z "$ANVIL_SELF" ] || [ ! -f "$ANVIL_SELF" ] || [ ! -f "$(dirname "$ANVIL_SELF")/bin/note" ]; then
+  ANVIL_TMP_REPO="$(mktemp -d "${TMPDIR:-/tmp}/anvil-install.XXXXXX")"
+  trap 'rm -rf "$ANVIL_TMP_REPO"' EXIT
+
+  echo "==> Fetching anvil ($ANVIL_REPO_REF) from $ANVIL_REPO_URL ..." >&2
+  if command -v git >/dev/null 2>&1; then
+    git clone --quiet --depth 1 --branch "$ANVIL_REPO_REF" "$ANVIL_REPO_URL" "$ANVIL_TMP_REPO" >&2
+  elif command -v curl >/dev/null 2>&1 && command -v tar >/dev/null 2>&1; then
+    ANVIL_REPO_HTTP_URL="$(printf '%s' "$ANVIL_REPO_URL" | sed -E 's#\.git$##; s#^git@github\.com:#https://github.com/#')"
+    curl -fsSL "$ANVIL_REPO_HTTP_URL/archive/refs/heads/$ANVIL_REPO_REF.tar.gz" \
+      | tar -xz -C "$ANVIL_TMP_REPO" --strip-components=1
+  else
+    echo "error: need either git, or curl+tar, on PATH to fetch anvil. Install one and retry." >&2
+    exit 1
+  fi
+
+  ANVIL_REPO_URL="$ANVIL_REPO_URL" ANVIL_REPO_REF="$ANVIL_REPO_REF" \
+    bash "$ANVIL_TMP_REPO/install.sh" --remote-upgrades "$@"
+  exit 0
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "$ANVIL_SELF")" && pwd)"
 DEFAULT_ANVIL_HOME="$HOME/.anvil"
 DEFAULT_DOMAINS="software, finance, trading, business, health"
 DEFAULT_CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
@@ -26,6 +63,7 @@ CLAUDE_SKILLS_DIR="${ANVIL_CLAUDE_SKILLS_DIR:-}"
 SKIP_CLAUDE_SKILLS=false
 ADD_TO_PATH="${ANVIL_ADD_TO_PATH:-}"   # true | false, whether to wire the anvil CLI into shell rc files
 NONINTERACTIVE=false
+RECORD_REMOTE_SOURCE="${ANVIL_REMOTE_UPGRADES:-false}" # true | false, see --remote-upgrades below
 
 usage() {
   cat <<EOF
@@ -65,6 +103,20 @@ Flags skip the matching question, for scripted or repeat installs:
                                          installing skills only if
                                          $DEFAULT_CLAUDE_SKILLS_DIR already
                                          exists, and not touching shell rc files
+  --remote-upgrades                     record this install's tooling source as
+                                         the GitHub repo ($ANVIL_REPO_URL, ref
+                                         $ANVIL_REPO_REF) instead of a local
+                                         clone path, so a later 'anvil upgrade'
+                                         re-fetches from there instead of
+                                         needing this clone kept around.
+                                         Implied automatically for a
+                                         curl | bash install, since there's no
+                                         durable local clone to point at.
+
+Piped installs (curl -fsSL <raw-url>/install.sh | bash) work with no local
+checkout at all — this script fetches a copy of itself into a temp dir first,
+then deletes it when done. Point ANVIL_REPO_URL / ANVIL_REPO_REF at a fork or
+different branch if you don't want the default (OnyxDrift/anvil, main).
 
 Re-running this script upgrades all package-managed files (bin/*,
 migrations/*, SCHEMA_VERSION, TOOLING_VERSION, NOTE_TEMPLATE.md,
@@ -98,6 +150,7 @@ while [ $# -gt 0 ]; do
     --add-to-path) ADD_TO_PATH=true; shift ;;
     --skip-add-to-path) ADD_TO_PATH=false; shift ;;
     --non-interactive) NONINTERACTIVE=true; shift ;;
+    --remote-upgrades) RECORD_REMOTE_SOURCE=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown arg: $1" >&2; usage; exit 1 ;;
   esac
@@ -381,7 +434,11 @@ INSTALLED_TOOLING=$(tr -d '[:space:]' < "$ANVIL_HOME/TOOLING_VERSION")
 # doesn't exist for them (same reasoning as usage.tsv/hydrated.tsv).
 TOOLING_SOURCE_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/anvil"
 mkdir -p "$TOOLING_SOURCE_STATE_DIR" 2>/dev/null || true
-echo "$SCRIPT_DIR" > "$TOOLING_SOURCE_STATE_DIR/tooling-source" 2>/dev/null || true
+if [ "$RECORD_REMOTE_SOURCE" = true ]; then
+  echo "git:${ANVIL_REPO_URL}#${ANVIL_REPO_REF}" > "$TOOLING_SOURCE_STATE_DIR/tooling-source" 2>/dev/null || true
+else
+  echo "$SCRIPT_DIR" > "$TOOLING_SOURCE_STATE_DIR/tooling-source" 2>/dev/null || true
+fi
 
 echo "Installing anvil (schema $INSTALLED_SCHEMA, tooling $INSTALLED_TOOLING)"
 
@@ -525,6 +582,10 @@ fi
 echo
 echo "==> Done. Vault root: $ANVIL_HOME"
 echo "==> Add $ANVIL_HOME/bin to PATH, or call scripts by full path."
+if [ "$RECORD_REMOTE_SOURCE" = true ]; then
+  echo "==> Tooling source recorded as $ANVIL_REPO_URL (#$ANVIL_REPO_REF) — no local clone needed."
+  echo "    'anvil upgrade' will re-fetch from there directly."
+fi
 echo
 
 # --- Final checklist: what's left, here and on any client machine ---
@@ -671,7 +732,7 @@ if [ "$SKIP_CLAUDE_SKILLS" = false ] && [ -n "$CLAUDE_SKILLS_DIR" ]; then
 
         /anvil
 
-    See "Claude Code Skills" in $SCRIPT_DIR/README.md for exactly what
-    each of these is supposed to do, with more examples.
+    See "Claude Code Skills" in README.md for exactly what each of these
+    is supposed to do, with more examples ($(if [ "$RECORD_REMOTE_SOURCE" = true ]; then echo "$ANVIL_REPO_URL"; else echo "$SCRIPT_DIR/README.md"; fi)).
 EOF
 fi
