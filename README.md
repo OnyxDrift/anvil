@@ -7,9 +7,28 @@ as equals. It stops agents from re-solving problems already solved.
 
 ## What it is
 
-A folder of small markdown notes, one claim per file, with YAML frontmatter.
-Not a database. Not preloaded into any agent's context. Agents search it
-on demand with `recall`, and add to it on demand with `note`.
+- **One vault, two agents** — small, atomic notes (one claim per file, YAML
+  frontmatter), not a database, that both Claude Code and Grok Build read
+  from and write to directly, so a lesson learned in one session is
+  available in the next, in any project.
+- **Searched on demand, never preloaded** — agents look things up with
+  `recall` when they need to and add to the vault with `note` when
+  something's worth keeping; nothing gets dumped into context
+  automatically, so the vault can grow without bloating every prompt.
+- **Approval-gated writes** — every `/note`, `/reflect`, and `/hydrate`
+  write goes through a draft-then-approve step (an actual selectable
+  menu, not free-typed prose) before anything touches disk; nothing is
+  written silently.
+- **Real Claude Code Skills, not just a CLAUDE.md convention** —
+  `/recall`, `/note`, `/reflect`, `/anvil`, `/hydrate`, and `/fill-vault`
+  work as explicit slash commands in any project, plus the same
+  functionality from a plain terminal via the `anvil` CLI or `bin/*`
+  scripts directly.
+- **Self-contained, syncable, and versioned like a real package** —
+  installs via `curl | bash` or a local clone, upgrades tooling and
+  schema independently (`anvil upgrade` / `anvil upgrade-vault`), and
+  syncs across machines with Syncthing if you want a shared vault — plain
+  files throughout, no database, no vendor lock-in.
 
 ## Claude Code Skills: /recall, /note, /reflect, /anvil, /hydrate, /fill-vault
 
