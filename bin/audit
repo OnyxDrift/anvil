@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Usage: audit --field <name>
+# Prints the vault-relative path of every canonical note where frontmatter
+# key <name> is missing entirely or present but empty. Read-only.
+#
+# This is the shared implementation behind bin/status's "missing <field>"
+# warnings and the /fill Skill's list of what to propose values for — one
+# check, not two copies that can drift apart.
+#
+# This is a package-managed file: install.sh overwrites it on every run.
+set -euo pipefail
+ANVIL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+FIELD=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --field) FIELD="$2"; shift 2 ;;
+    *) echo "unknown arg: $1" >&2; echo "usage: audit --field <name>" >&2; exit 1 ;;
+  esac
+done
+
+if [ -z "$FIELD" ]; then
+  echo "usage: audit --field <name>" >&2
+  exit 1
+fi
+
+NOTE_DIRS="$ANVIL_ROOT/semantic $ANVIL_ROOT/procedural $ANVIL_ROOT/strategic $ANVIL_ROOT/episodic"
+ALL_NOTES=$(find $NOTE_DIRS -maxdepth 1 -name '*.md' 2>/dev/null || true)
+
+for f in $ALL_NOTES; do
+  if grep -q "^status: canonical$" "$f" 2>/dev/null; then
+    if ! grep -q "^${FIELD}:[[:space:]]*[^[:space:]]" "$f" 2>/dev/null; then
+      # Vault-relative path (e.g. semantic/2026-...-title.md), matching
+      # how every other anvil script reports note paths.
+      echo "${f#"$ANVIL_ROOT"/}"
+    fi
+  fi
+done

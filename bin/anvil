@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+# Usage: anvil <recall|note|status|init|path|open-vault|install-additional-packages|help> [args...]
+# Thin dispatcher over the other bin/ scripts, meant to be on PATH so you
+# don't need the full $ANVIL_HOME/bin/... path for everyday use.
+set -euo pipefail
+ANVIL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+usage() {
+  cat <<EOF
+Usage: anvil <command> [args...]
+
+Notes:
+  recall <topic>              Search canonical notes (anvil/bin/recall)
+  note [args...]               Write a note (anvil/bin/note)
+
+Vault health:
+  status                        Vault dashboard, both version axes included
+                                  (anvil/bin/status)
+  audit --field <name>            List canonical notes missing that field
+                                  (anvil/bin/audit)
+  usage                          This machine's read/write activity
+                                  (anvil/bin/usage)
+
+Vault schema (note data):
+  upgrade-vault [--dry-run]      Run outstanding note-schema migrations
+                                  (anvil/bin/upgrade-vault)
+
+Tooling (anvil itself):
+  upgrade [--claude-skills-dir <dir>] [--add-to-path] [--force]
+                                  Refresh anvil's own scripts/Skills from
+                                  the local source repo (anvil/bin/upgrade)
+
+Project setup:
+  init [--path <dir>]            Append this vault's CLAUDE_BLOCK.md to
+                                  <dir>/CLAUDE.md (default: current directory).
+                                  Safe to re-run — refreshes an existing
+                                  ## Anvil section in place if it's stale,
+                                  does nothing if already current, never
+                                  touches the rest of the file.
+
+Companion tools (optional, not required for anything else here):
+  install-additional-packages    Install optional companion tools — right
+                                  now, just emeraldian, a TUI for reading
+                                  an Obsidian-format vault and its graph
+                                  in the terminal
+  open-vault [path]               Open a vault in emeraldian (default:
+                                  this vault's root)
+
+Other:
+  path                            Print this vault's root directory
+  help                             Show this message
+EOF
+}
+
+CMD="${1:-help}"
+[ $# -gt 0 ] && shift || true
+
+case "$CMD" in
+  recall)
+    exec "$ANVIL_ROOT/bin/recall" "$@"
+    ;;
+  note)
+    exec "$ANVIL_ROOT/bin/note" "$@"
+    ;;
+  status)
+    exec "$ANVIL_ROOT/bin/status" "$@"
+    ;;
+  usage)
+    exec "$ANVIL_ROOT/bin/usage" "$@"
+    ;;
+  upgrade)
+    exec "$ANVIL_ROOT/bin/upgrade" "$@"
+    ;;
+  upgrade-vault)
+    exec "$ANVIL_ROOT/bin/upgrade-vault" "$@"
+    ;;
+  audit)
+    exec "$ANVIL_ROOT/bin/audit" "$@"
+    ;;
+  path)
+    echo "$ANVIL_ROOT"
+    ;;
+  install-additional-packages)
+    echo "Optional companion tools for anvil (none required for anvil"
+    echo "itself to work — these just make using a vault nicer):"
+    echo
+    echo "  emeraldian — a TUI that reads an Obsidian-format vault (the"
+    echo "  same plain markdown files anvil already writes, no conversion"
+    echo "  needed) and shows its notes plus a force-directed graph, right"
+    echo "  in the terminal. https://github.com/iamrohithrnair/emeraldian"
+    echo
+    if command -v emeraldian >/dev/null 2>&1; then
+      echo "Already installed: $(command -v emeraldian)"
+      exit 0
+    fi
+    if command -v brew >/dev/null 2>&1; then
+      echo "Installing emeraldian via Homebrew..."
+      brew install iamrohithrnair/tap/emeraldian
+      echo
+      echo "Installed. Try: anvil open-vault"
+    else
+      echo "Homebrew not found — install manually with one of:"
+      echo "  cargo install emeraldian"
+      echo "  curl -fsSL https://emeraldian-tui.github.io/install.sh | sh"
+      echo "Then: anvil open-vault"
+    fi
+    ;;
+  open-vault)
+    TARGET="${1:-$ANVIL_ROOT}"
+    if ! command -v emeraldian >/dev/null 2>&1; then
+      echo "error: emeraldian is not installed. Run: anvil install-additional-packages" >&2
+      exit 1
+    fi
+    if [ ! -d "$TARGET" ]; then
+      echo "error: $TARGET is not a directory" >&2
+      exit 1
+    fi
+    exec emeraldian "$TARGET"
+    ;;
+  init)
+    TARGET_DIR="$(pwd)"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --path) TARGET_DIR="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "unknown arg: $1" >&2; usage; exit 1 ;;
+      esac
+    done
+
+    if [ ! -d "$TARGET_DIR" ]; then
+      echo "error: $TARGET_DIR is not a directory" >&2
+      exit 1
+    fi
+
+    if [ ! -f "$ANVIL_ROOT/CLAUDE_BLOCK.md" ]; then
+      echo "error: $ANVIL_ROOT/CLAUDE_BLOCK.md not found — re-run install.sh to generate it" >&2
+      exit 1
+    fi
+
+    TARGET_FILE="$TARGET_DIR/CLAUDE.md"
+
+    # The ## Anvil section is package-managed content living inside an
+    # otherwise user-owned file — same idea as bin/* always refreshing
+    # while notes never do. If one already exists, refresh it in place
+    # (bounded to that section only) instead of treating mere presence as
+    # "done" — an old block left behind after anvil's own docs changed is
+    # a real, previously-silent staleness problem, not a safe no-op.
+    if [ -f "$TARGET_FILE" ] && grep -q "^## Anvil$" "$TARGET_FILE"; then
+      START_LINE=$(grep -n "^## Anvil$" "$TARGET_FILE" | head -1 | cut -d: -f1)
+      TOTAL_LINES=$(wc -l < "$TARGET_FILE" | tr -d ' ')
+      AFTER_START=$((START_LINE + 1))
+      REL_NEXT_HEADING=""
+      if [ "$AFTER_START" -le "$TOTAL_LINES" ]; then
+        REL_NEXT_HEADING=$(tail -n "+$AFTER_START" "$TARGET_FILE" | { grep -n "^## " || true; } | head -1 | cut -d: -f1)
+      fi
+      if [ -n "$REL_NEXT_HEADING" ]; then
+        SECTION_END=$((AFTER_START + REL_NEXT_HEADING - 2))
+      else
+        SECTION_END="$TOTAL_LINES"
+      fi
+
+      CURRENT_SECTION=$(sed -n "${START_LINE},${SECTION_END}p" "$TARGET_FILE")
+      NEW_BLOCK=$(cat "$ANVIL_ROOT/CLAUDE_BLOCK.md")
+
+      if [ "$CURRENT_SECTION" = "$NEW_BLOCK" ]; then
+        echo "Already up to date: $TARGET_FILE's ## Anvil section matches the current block."
+        exit 0
+      fi
+
+      TMP_FILE=$(mktemp)
+      if [ "$START_LINE" -gt 1 ]; then
+        sed -n "1,$((START_LINE - 1))p" "$TARGET_FILE" >> "$TMP_FILE"
+      fi
+      cat "$ANVIL_ROOT/CLAUDE_BLOCK.md" >> "$TMP_FILE"
+      if [ "$SECTION_END" -lt "$TOTAL_LINES" ]; then
+        # Ensure a blank line separates the block from whatever follows —
+        # CLAUDE_BLOCK.md doesn't guarantee a trailing blank line itself,
+        # and the old section's own trailing blank (if any) is part of
+        # what's being replaced, not preserved automatically.
+        echo >> "$TMP_FILE"
+        sed -n "$((SECTION_END + 1)),\$p" "$TARGET_FILE" >> "$TMP_FILE"
+      fi
+      mv "$TMP_FILE" "$TARGET_FILE"
+      echo "Updated the stale ## Anvil section in $TARGET_FILE"
+      exit 0
+    fi
+
+    if [ -f "$TARGET_FILE" ]; then
+      {
+        echo
+        echo "---"
+        echo
+        cat "$ANVIL_ROOT/CLAUDE_BLOCK.md"
+      } >> "$TARGET_FILE"
+      echo "Appended the Anvil block to existing $TARGET_FILE"
+    else
+      cat "$ANVIL_ROOT/CLAUDE_BLOCK.md" > "$TARGET_FILE"
+      echo "Created $TARGET_FILE with the Anvil block"
+    fi
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    echo "unknown command: $CMD" >&2
+    usage
+    exit 1
+    ;;
+esac

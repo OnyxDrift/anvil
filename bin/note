@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+# Usage: note --type <semantic|procedural|strategic|episodic> --domain <name>
+#             --title "..." [--subdomain x] [--project x] [--tags a,b,c]
+#             [--source claude|grok|opencode|human] [--status canonical|draft|disputed|archived]
+#             [--origin <text>]
+#
+# --domain must match a line in $ANVIL_ROOT/domains.txt (case-insensitive).
+# If it doesn't, this refuses to write the note and prints the existing list —
+# ask the user before adding a new domain there.
+#
+# --subdomain is normally a tool, technology, or language (syncthing,
+# python, ssh) — NOT one of your own projects. For a domain where notes
+# usually aren't about software tooling at all (e.g. trading, finance),
+# --subdomain may instead be a topical sub-category of that domain (e.g.
+# backtesting, portfolio-theory) — still never a project. --project is one
+# of your own named projects (anvil, citeforge, swing-stack) — NOT a tool
+# or technology. Don't put the same value in both.
+#
+# --origin is what backs the claim, distinct from --source (which tool/human
+# wrote the note). If not given, it's auto-detected from the CALLER's current
+# directory: a git remote URL if one exists, else the local repo root, else
+# the plain working directory if not inside a git repo at all. For non-code
+# domains (a book, a webpage, a PDF), pass --origin explicitly.
+#
+# This is a package-managed file: install.sh overwrites it on every run.
+set -euo pipefail
+ANVIL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+TYPE=""
+DOMAIN=""
+SUBDOMAIN=""
+PROJECT=""
+TITLE=""
+SOURCE="${ANVIL_SOURCE:-human}"
+STATUS="canonical"
+TAGS=""
+ORIGIN=""
+ORIGIN_GIVEN=false
+
+usage_and_exit() {
+  echo "usage: note --type <semantic|procedural|strategic|episodic> --domain <name> --title \"...\" [--subdomain x] [--project x] [--tags a,b,c] [--source claude|grok|opencode|human] [--status canonical|draft|disputed|archived] [--origin <text>]" >&2
+  exit 1
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --type) TYPE="$2"; shift 2 ;;
+    --domain) DOMAIN="$2"; shift 2 ;;
+    --subdomain) SUBDOMAIN="$2"; shift 2 ;;
+    --project) PROJECT="$2"; shift 2 ;;
+    --title) TITLE="$2"; shift 2 ;;
+    --source) SOURCE="$2"; shift 2 ;;
+    --status) STATUS="$2"; shift 2 ;;
+    --tags) TAGS="$2"; shift 2 ;;
+    --origin) ORIGIN="$2"; ORIGIN_GIVEN=true; shift 2 ;;
+    *) echo "unknown arg: $1" >&2; usage_and_exit ;;
+  esac
+done
+
+if [ "$ORIGIN_GIVEN" = false ]; then
+  if ORIGIN=$(git rev-parse --git-dir >/dev/null 2>&1 && git remote get-url origin 2>/dev/null); then
+    :
+  elif ORIGIN=$(git rev-parse --show-toplevel 2>/dev/null); then
+    :
+  else
+    ORIGIN="$(pwd)"
+  fi
+fi
+
+if [ -z "$TYPE" ] || [ -z "$DOMAIN" ] || [ -z "$TITLE" ]; then
+  usage_and_exit
+fi
+
+case "$TYPE" in
+  semantic|procedural|strategic|episodic) ;;
+  *) echo "invalid --type: $TYPE (must be semantic|procedural|strategic|episodic)" >&2; exit 1 ;;
+esac
+
+DOMAINS_FILE="$ANVIL_ROOT/domains.txt"
+if [ -f "$DOMAINS_FILE" ]; then
+  MATCHED=""
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%%#*}"
+    line="$(echo "$line" | xargs)"
+    [ -z "$line" ] && continue
+    if [ "$(echo "$line" | tr '[:upper:]' '[:lower:]')" = "$(echo "$DOMAIN" | tr '[:upper:]' '[:lower:]')" ]; then
+      MATCHED="$line"
+      break
+    fi
+  done < "$DOMAINS_FILE"
+
+  if [ -z "$MATCHED" ]; then
+    echo "invalid --domain: '$DOMAIN' is not in $DOMAINS_FILE" >&2
+    echo "Existing domains:" >&2
+    grep -v '^[[:space:]]*#' "$DOMAINS_FILE" | grep -v '^[[:space:]]*$' | sed 's/^/  - /' >&2
+    echo >&2
+    echo "Domains are meant to stay few and broad. If none of these truly fit," >&2
+    echo "ask the user before adding a new one — then add it as its own line in" >&2
+    echo "$DOMAINS_FILE and retry. Use --subdomain for anything more specific." >&2
+    exit 1
+  fi
+  DOMAIN="$MATCHED"
+else
+  echo "WARNING: $DOMAINS_FILE not found — skipping domain validation" >&2
+fi
+
+if [ -n "$TAGS" ]; then
+  TAGS_YAML="[$(echo "$TAGS" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | paste -sd, - | sed 's/,/, /g')]"
+else
+  TAGS_YAML="[]"
+fi
+
+SLUG=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//;s/-$//')
+DATE=$(date +%Y-%m-%d)
+FILE="$ANVIL_ROOT/$TYPE/${DATE}-${SLUG}.md"
+
+cat > "$FILE" <<NOTE
+---
+type: $TYPE
+domain: $DOMAIN
+subdomain: $SUBDOMAIN
+project: $PROJECT
+source: $SOURCE
+origin: $ORIGIN
+status: $STATUS
+updated: $DATE
+tags: $TAGS_YAML
+---
+# $TITLE
+
+NOTE
+
+echo "Wrote $FILE"
+echo "Edit it now to add the claim body."
+
+# Auto-link into the domain's MOC file. Runs for CLI use and Skill use alike,
+# so linking is never a step that only happens through /note or /reflect.
+if [ "$STATUS" = "canonical" ]; then
+  DOMAIN_TITLE=$(printf '%s' "$DOMAIN" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')
+  MOC_DIR="$ANVIL_ROOT/moc"
+  MOC_FILE="$MOC_DIR/${DOMAIN_TITLE}.md"
+  mkdir -p "$MOC_DIR"
+  MOC_JUST_CREATED=0
+  if [ ! -f "$MOC_FILE" ]; then
+    printf '# %s\n' "$DOMAIN_TITLE" > "$MOC_FILE"
+    MOC_JUST_CREATED=1
+  fi
+
+  LINK_LINE="- [[$(basename "$FILE" .md)]]"
+
+  if [ -n "$SUBDOMAIN" ]; then
+    SUB_TITLE=$(printf '%s' "$SUBDOMAIN" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')
+    HEADING="## $SUB_TITLE"
+    if grep -qxF "$HEADING" "$MOC_FILE"; then
+      TMP_MOC=$(mktemp)
+      awk -v h="$HEADING" -v link="$LINK_LINE" '
+        {
+          print
+          if ($0 == h) { pending=1; next }
+          if (pending == 1 && $0 == "") { print link; pending=0 }
+        }
+        END { if (pending == 1) print link }
+      ' "$MOC_FILE" > "$TMP_MOC" && mv "$TMP_MOC" "$MOC_FILE"
+    else
+      printf '\n%s\n\n%s\n' "$HEADING" "$LINK_LINE" >> "$MOC_FILE"
+    fi
+  else
+    if [ "$MOC_JUST_CREATED" = "1" ]; then
+      printf '\n%s\n' "$LINK_LINE" >> "$MOC_FILE"
+    else
+      printf '%s\n' "$LINK_LINE" >> "$MOC_FILE"
+    fi
+  fi
+
+  echo "Linked from moc/${DOMAIN_TITLE}.md"
+fi
+
+# Local usage log — machine-local only, deliberately kept outside $ANVIL_ROOT
+# so it never syncs via Syncthing. Never let logging failures break a write.
+{
+  LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/anvil"
+  LOG_FILE="$LOG_DIR/usage.tsv"
+  mkdir -p "$LOG_DIR"
+  WORDS=$(wc -w < "$FILE" | tr -d ' ')
+  CHARS=$(wc -c < "$FILE" | tr -d ' ')
+  printf '%s\twrite\t%s\t%s\t%s\t%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$DOMAIN" "$TYPE" "$WORDS" "$CHARS" >> "$LOG_FILE"
+} 2>/dev/null || true

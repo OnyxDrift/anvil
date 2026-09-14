@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Usage: upgrade [--claude-skills-dir <dir>] [--add-to-path] [--force]
+# Refreshes anvil's own TOOLING (bin/*, Skills, NOTE_TEMPLATE.md, install.sh
+# itself) from the local source repo that installed this vault — a
+# different axis from `upgrade-vault`, which migrates the vault's NOTE
+# DATA. This never touches notes, domains.txt, or moc/*.md.
+#
+# Reuses install.sh's own package-file deployment logic by re-invoking it
+# non-interactively in existing-vault mode, rather than duplicating that
+# logic here.
+#
+# This is a package-managed file: install.sh overwrites it on every run.
+set -euo pipefail
+ANVIL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+CLAUDE_SKILLS_DIR=""
+CLAUDE_SKILLS_DIR_GIVEN=false
+ADD_TO_PATH=false
+FORCE=false
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --claude-skills-dir) CLAUDE_SKILLS_DIR="$2"; CLAUDE_SKILLS_DIR_GIVEN=true; shift 2 ;;
+    --add-to-path) ADD_TO_PATH=true; shift ;;
+    --force) FORCE=true; shift ;;
+    *) echo "unknown arg: $1" >&2
+       echo "usage: upgrade [--claude-skills-dir <dir>] [--add-to-path] [--force]" >&2
+       exit 1 ;;
+  esac
+done
+
+# Machine-local, outside $ANVIL_ROOT so it never synced via Syncthing —
+# see install.sh for why.
+SOURCE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/anvil/tooling-source"
+if [ ! -f "$SOURCE_FILE" ]; then
+  echo "error: $SOURCE_FILE not found." >&2
+  echo "Re-run install.sh from the anvil source repo once (pointed at this" >&2
+  echo "vault, existing-vault mode) to record where it lives, then retry." >&2
+  exit 1
+fi
+SOURCE_DIR=$(tr -d '[:space:]' < "$SOURCE_FILE")
+
+if [ ! -f "$SOURCE_DIR/install.sh" ]; then
+  echo "error: recorded source repo not found or moved: $SOURCE_DIR" >&2
+  echo "Re-run install.sh from wherever the anvil repo lives now to fix this." >&2
+  exit 1
+fi
+
+INSTALLED_TOOLING="<none>"
+[ -f "$ANVIL_ROOT/TOOLING_VERSION" ] && INSTALLED_TOOLING=$(tr -d '[:space:]' < "$ANVIL_ROOT/TOOLING_VERSION")
+SOURCE_TOOLING=$(tr -d '[:space:]' < "$SOURCE_DIR/TOOLING_VERSION")
+
+if [ "$FORCE" = false ] && [ "$INSTALLED_TOOLING" = "$SOURCE_TOOLING" ]; then
+  echo "tooling already up to date at $INSTALLED_TOOLING"
+  exit 0
+fi
+
+# Conservative by default: only refresh Skills if they were already
+# installed for THIS vault, and never touch shell rc files unless asked.
+if [ "$CLAUDE_SKILLS_DIR_GIVEN" = false ]; then
+  DEFAULT_SKILLS_DIR="$HOME/.claude/skills"
+  if [ -d "$DEFAULT_SKILLS_DIR" ] && grep -rqlF "$ANVIL_ROOT" "$DEFAULT_SKILLS_DIR"/*/SKILL.md 2>/dev/null; then
+    CLAUDE_SKILLS_DIR="$DEFAULT_SKILLS_DIR"
+    echo "Detected Skills already installed for this vault at $CLAUDE_SKILLS_DIR — refreshing them too."
+  else
+    echo "No Skills found already pointing at this vault — skipping Skill refresh."
+    echo "Pass --claude-skills-dir <dir> to install or refresh them explicitly."
+  fi
+fi
+
+echo "Refreshing anvil tooling: $INSTALLED_TOOLING -> $SOURCE_TOOLING"
+echo "  source: $SOURCE_DIR"
+
+if [ -n "$CLAUDE_SKILLS_DIR" ]; then
+  ANVIL_HOME="$ANVIL_ROOT" ANVIL_VAULT_ACTION=existing ANVIL_MODE=single \
+    ANVIL_CLAUDE_SKILLS_DIR="$CLAUDE_SKILLS_DIR" ANVIL_ADD_TO_PATH="$ADD_TO_PATH" \
+    bash "$SOURCE_DIR/install.sh" --non-interactive
+else
+  ANVIL_HOME="$ANVIL_ROOT" ANVIL_VAULT_ACTION=existing ANVIL_MODE=single \
+    ANVIL_ADD_TO_PATH="$ADD_TO_PATH" \
+    bash "$SOURCE_DIR/install.sh" --non-interactive --skip-claude-skills
+fi
+
+echo "Tooling refreshed. Now at $SOURCE_TOOLING."

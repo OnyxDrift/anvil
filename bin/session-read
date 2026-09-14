@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# Usage: session-read --engine claude|grok <path-to-primary-log>
+# Prints ONLY the conversational text (user + assistant text blocks) from
+# a Claude Code .jsonl transcript or a Grok Build updates.jsonl file.
+# Deliberately drops tool_use/tool_result content, which can be huge and
+# isn't what /hydrate needs to read to extract durable claims.
+# Read-only. This is a package-managed file: install.sh overwrites it on
+# every run.
+set -euo pipefail
+
+ENGINE=""
+LOG=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --engine) ENGINE="$2"; shift 2 ;;
+    *) LOG="$1"; shift ;;
+  esac
+done
+
+if [ -z "$ENGINE" ] || [ -z "$LOG" ]; then
+  echo "usage: session-read --engine claude|grok <path-to-primary-log>" >&2
+  exit 1
+fi
+
+if [ ! -f "$LOG" ]; then
+  echo "error: $LOG not found" >&2
+  exit 1
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "error: python3 is required to parse session logs" >&2
+  exit 1
+fi
+
+case "$ENGINE" in
+  claude)
+    python3 - "$LOG" <<'PY'
+import json, sys
+
+path = sys.argv[1]
+with open(path, "r", errors="replace") as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except Exception:
+            continue
+
+        rtype = row.get("type")
+        if rtype not in ("user", "assistant"):
+            continue
+
+        message = row.get("message") or {}
+        role = message.get("role", rtype)
+        content = message.get("content")
+        ts = row.get("timestamp", "")
+
+        texts = []
+        if isinstance(content, str):
+            texts.append(content)
+        elif isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text":
+                    texts.append(block.get("text", ""))
+                # tool_use / tool_result / other block types deliberately skipped
+
+        text = "\n".join(t for t in texts if t).strip()
+        if not text:
+            continue
+        # Skip Skill-invocation boilerplate wrapper text, not real content
+        if text.startswith("<command-message>") or text.startswith("Base directory for this skill:"):
+            continue
+
+        print(f"[{role}] {ts}")
+        print(text)
+        print()
+PY
+    ;;
+  grok)
+    python3 - "$LOG" <<'PY'
+import json, sys
+
+path = sys.argv[1]
+skipped = 0
+printed = 0
+with open(path, "r", errors="replace") as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except Exception:
+            skipped += 1
+            continue
+
+        # Best-effort shape guess, not yet verified against real Grok data.
+        role = row.get("role") or row.get("type")
+        if role not in ("user", "assistant"):
+            continue
+
+        text = row.get("text") or row.get("content")
+        if isinstance(text, list):
+            text = "\n".join(
+                b.get("text", "") for b in text
+                if isinstance(b, dict) and b.get("type") == "text"
+            )
+        if not isinstance(text, str) or not text.strip():
+            skipped += 1
+            continue
+
+        ts = row.get("timestamp", "")
+        print(f"[{role}] {ts}")
+        print(text.strip())
+        print()
+        printed += 1
+
+if printed == 0:
+    print(f"(session-read: 0 recognizable messages parsed from this Grok session, "
+          f"{skipped} lines skipped — the assumed schema may not match this file; "
+          f"needs checking against real Grok Build output)", file=sys.stderr)
+PY
+    ;;
+  *)
+    echo "unknown --engine: $ENGINE (must be claude or grok)" >&2
+    exit 1
+    ;;
+esac
